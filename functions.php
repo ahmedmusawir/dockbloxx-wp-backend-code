@@ -4,6 +4,87 @@
  *
  */		
 
+/**
+ * Adds Cross-Origin Resource Sharing (CORS) headers to all HTTP responses.
+ *
+ * This function sets the necessary HTTP headers to allow requests from any origin and supports
+ * multiple HTTP methods (GET, POST, PATCH, PUT, DELETE, OPTIONS, READ). It also specifies which
+ * headers are permitted in requests and enables credentials.
+ *
+ * For HTTP OPTIONS requests (commonly used as a preflight check in CORS scenarios), the function
+ * sends a 200 OK status immediately and terminates further processing.
+ *
+ * @return void
+ *
+ * @note This function is hooked to the 'init' action to ensure CORS headers are added early in the
+ * request lifecycle, affecting all subsequent output.
+ */
+
+ function add_cors_http_header()
+ {
+  header("Access-Control-Allow-Origin: *");
+  header('Access-Control-Allow-Methods: GET, POST, PATCH, PUT, DELETE, OPTIONS, READ');
+  header('Access-Control-Allow-Headers: Origin, Content-Type, X-Auth-Token,authorization,XMLHttpRequest, user-agent, accept, x-requested-with');
+  header("Access-Control-Allow-Credentials: true");
+
+  if ('OPTIONS' == $_SERVER['REQUEST_METHOD']) {
+   status_header(200);
+   exit();
+  }
+ }
+
+add_action('init', 'add_cors_http_header');
+
+/**
+ * Format and expose custom variation meta data for WooCommerce order items.
+ *
+ * This function is hooked to the 'woocommerce_order_item_get_formatted_meta_data' filter
+ * and customizes the display output for order item meta with the key "variations".
+ * It performs the following operations:
+ *   - Unserializes the meta value (if stored in a serialized format).
+ *   - Checks that the meta value is a non-empty array.
+ *   - Iterates over each variation element (which may be an associative array or an object)
+ *     and constructs a string in the format "Name: Value", with the variation name wrapped in <strong> tags.
+ *   - Joins each formatted variation string with HTML <br> tags to display each on a new line.
+ *   - Overrides the default 'value' and 'display_value' of the meta data object so that the formatted string is used in the admin UI.
+ *
+ * @param array $formatted_meta Associative array of formatted meta data objects for an order item.
+ * @param WC_Order_Item $order_item The order item object from which meta data is retrieved.
+ *
+ * @return array The modified formatted meta data array with custom formatting applied to the "variations" meta key.
+ *
+ * Note: This function ensures that custom variation details (e.g., product attribute selections)
+ * included via the "variations" meta key are rendered in a human-readable format in the WooCommerce
+ * admin order details page. This is particularly useful for orders created via a custom REST API
+ * process where variation details are stored in meta data rather than being auto-fetched via variation_id.
+ */
+add_filter('woocommerce_order_item_get_formatted_meta_data', 'custom_display_variation_meta', 10, 2);
+function custom_display_variation_meta( $formatted_meta, $order_item ) {
+    foreach ( $order_item->get_meta_data() as $meta ) {
+        if ( 'variations' === $meta->key ) {
+            $value = maybe_unserialize( $meta->value );
+            if ( is_array( $value ) && !empty( $value ) ) {
+                $formatted_values = array();
+                foreach ( $value as $variation ) {
+                    if ( is_array( $variation ) && isset( $variation['name'], $variation['value'] ) ) {
+                        $formatted_values[] = '<strong>' . esc_html($variation['name']) . ':</strong> ' . esc_html($variation['value']);
+                    } elseif ( is_object( $variation ) && isset( $variation->name, $variation->value ) ) {
+                        $formatted_values[] = '<strong>' . esc_html($variation->name) . ':</strong> ' . esc_html($variation->value);
+                    }
+                }
+                // Join each variation on a new line using <br> tags
+                $formatted_string = implode('<br>', $formatted_values);
+                $formatted_meta[ $meta->key ] = (object) array(
+                    'key'           => $meta->key,
+                    'value'         => $formatted_string,
+                    'display_value' => $formatted_string,
+                );
+            }
+        }
+    }
+    return $formatted_meta;
+}
+
  /**
  * Adds YouTube video data to the product's images array in the WooCommerce REST API response.
  *
@@ -34,25 +115,17 @@ function add_video_data_to_rest_api($response, $product, $request) {
         // Construct the video data object
         $video_data = array(
             'id'   => 'youtube_video',
-            'src'  => 'https://www.youtube.com/embed/' . $video_id,
+            'vid_id'  => $video_id,
             'type' => 'video',
         );
 
         // Add video_data to the response
         $response->data['video_data'] = $video_data;
-    }
 
-    // Add a test string to the images array
-    // if (!empty($response->data['images'])) {
-    //     $response->data['images'][] = array(
-    //         'id'   => 'test_string',
-    //         'src'  => 'This is a test string',
-    //         'type' => 'text',
-    //     );
-    // }
-
-    if (!empty($response->data['images'])) {
-        $response->data['images'][] = $video_data;
+        // Prepend video data to the images array
+        if (!empty($response->data['images'])) {
+            array_unshift($response->data['images'], $video_data);
+        }
     }
 
     return $response;
@@ -99,7 +172,6 @@ function add_price_display_to_rest_api( $response, $product, $request ) {
 }
 // THIS IS NO LONGER NECESSARY CUZ BY DEFAULT WE HAVE price_html 
 // add_filter( 'woocommerce_rest_prepare_product_object', 'add_price_display_to_rest_api', 10, 3 );
-
 
  /**
  * Registers a custom GraphQL field `totalProducts` in the RootQuery.
@@ -236,6 +308,7 @@ if( function_exists('acf_add_options_page') ) {
     acf_add_options_sub_page('Global');
     acf_add_options_sub_page('Reviews & FAQs');
     acf_add_options_sub_page('Global Product');
+    acf_add_options_sub_page('Woocom Shipping');
 } 
 
 // Remove WooCommerce Marketing Hub & Analytics Menu from the sidebar - for WooCommerce v4.3+
